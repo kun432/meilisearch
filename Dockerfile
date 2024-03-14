@@ -1,7 +1,18 @@
 # Compile
-FROM    rust:1.75.0-alpine3.18 AS compiler
+FROM    nvidia/cuda:12.3.2-devel-ubuntu22.04 AS compiler
 
-RUN     apk add -q --update-cache --no-cache build-base openssl-dev
+ENV	NVIDIA_VISIBLE_DEVICES all
+ENV	NVIDIA_DRIVER_CAPABILITIES compute,utility
+ENV	CUDA_COMPUTE_CAP 89
+
+RUN     apt-get update -qq \
+        && apt-get install -y -qq build-essential curl pkg-config libssl-dev \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
+
+RUN     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+ENV     PATH "/root/.cargo/bin:/usr/bin:${PATH}"
 
 WORKDIR /
 
@@ -9,24 +20,26 @@ ARG     COMMIT_SHA
 ARG     COMMIT_DATE
 ARG     GIT_TAG
 ENV     VERGEN_GIT_SHA=${COMMIT_SHA} VERGEN_GIT_COMMIT_TIMESTAMP=${COMMIT_DATE} VERGEN_GIT_DESCRIBE=${GIT_TAG}
-ENV     RUSTFLAGS="-C target-feature=-crt-static"
+ENV     RUSTFLAGS "-C target-feature=-crt-static"
+ENV     RUST_BACKTRACE=1
 
 COPY    . .
 RUN     set -eux; \
-        apkArch="$(apk --print-arch)"; \
-        if [ "$apkArch" = "aarch64" ]; then \
-            export JEMALLOC_SYS_WITH_LG_PAGE=16; \
-        fi && \
-        cargo build --release -p meilisearch -p meilitool
+        cargo build --release -p meilisearch -p meilitool -p milli --no-default-features --features "cuda analytics mini-dashboard japanese"
 
 # Run
-FROM    alpine:3.16
+FROM    nvidia/cuda:12.3.2-runtime-ubuntu22.04
+
+#ENV	NVIDIA_VISIBLE_DEVICES all
+#ENV	NVIDIA_DRIVER_CAPABILITIES compute,utility
 
 ENV     MEILI_HTTP_ADDR 0.0.0.0:7700
 ENV     MEILI_SERVER_PROVIDER docker
 
-RUN     apk update --quiet \
-        && apk add -q --no-cache libgcc tini curl
+RUN     apt-get update -qq \
+        && apt-get install -y -qq tini curl \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
 
 # add meilisearch and meilitool to the `/bin` so you can run it from anywhere
 # and it's easy to find.
